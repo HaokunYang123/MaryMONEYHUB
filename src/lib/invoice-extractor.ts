@@ -27,6 +27,8 @@ export interface Tier2Result {
   date: string;
   description: string;
   filingCategory: string;
+  suggestedPath: string;
+  suggestedDestination: 'QuickBooks' | 'Archive Only';
 }
 
 // Legacy interface
@@ -121,10 +123,13 @@ export async function runTier1(buffer: Buffer, mimeType: string): Promise<Tier1R
 /**
  * TIER 2: Deep Extraction with Gemini 2.5 Flash
  * Only runs on documents that need deep analysis (actionable financials)
+ * Now includes suggestedPath and suggestedDestination for the "Smart Upload" workflow
  */
 export async function runTier2(buffer: Buffer, mimeType: string): Promise<Tier2Result> {
+  const currentYear = new Date().getFullYear();
+  
   const prompt = `Perform DEEP EXTRACTION on this financial document.
-  Extract: Vendor, Amount, Date, and Description.
+  Extract: Vendor, Amount, Date, Description, and suggest where to file it.
   
   RULES:
   - If NO PRICE is found, set amount to 0 and explain in description.
@@ -134,13 +139,21 @@ export async function runTier2(buffer: Buffer, mimeType: string): Promise<Tier2R
   IMPORTANT: For 'filingCategory', you MUST use one of these exact folder names:
   ${ALLOWED_FOLDERS.join(", ")}
   
-  - "Property Repairs": AC repair, plumbing, maintenance.
-  - "Utilities": Electric, gas, internet, water.
-  - "Inventory": Seeds, nutrients, supplies, wholesale goods.
+  - "Property Invoices": Property-related bills, rent, property maintenance.
+  - "Repair Invoices": AC repair, plumbing, maintenance, fixes.
+  - "Utility Invoices": Electric, gas, internet, water.
+  - "Inventory Invoices": Seeds, nutrients, supplies, wholesale goods.
   - "Administrative": Permits, notices, general docs.
-  - "Legal": Contracts, agreements.
-  - "Payroll": Wages, benefits, HR.
-  - "Taxes": Tax forms, filings.
+  - "Legal Documents": Contracts, agreements.
+  - "Payroll Documents": Wages, benefits, HR.
+  - "Tax Documents": Tax forms, filings.
+  
+  FOR 'suggestedPath': Build a folder path like "Invoices/{Year}/{VendorName}" or "Invoices/{Year}/{Category}".
+  Example: "Invoices/${currentYear}/Verde Farms" or "Invoices/${currentYear}/Utilities"
+  
+  FOR 'suggestedDestination': 
+  - Use "QuickBooks" if this is a bill/invoice that needs to be paid.
+  - Use "Archive Only" if this is just for record-keeping (contracts, permits, $0 items).
   
   Return ONLY raw JSON:
   {
@@ -148,14 +161,28 @@ export async function runTier2(buffer: Buffer, mimeType: string): Promise<Tier2R
     "amount": number,
     "date": "YYYY-MM-DD",
     "description": "string",
-    "filingCategory": "one of the exact folder names above"
+    "filingCategory": "one of the exact folder names above",
+    "suggestedPath": "Invoices/{Year}/{VendorName}",
+    "suggestedDestination": "QuickBooks" or "Archive Only"
   }`;
 
   try {
     const result = await deepExtractionModel.generateContent([prompt, fileToPart(buffer, mimeType)]);
     const response = result.response.text();
     const cleaned = response.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    
+    // Ensure suggestedDestination has a valid value
+    if (!parsed.suggestedDestination || !['QuickBooks', 'Archive Only'].includes(parsed.suggestedDestination)) {
+      parsed.suggestedDestination = parsed.amount > 0 ? 'QuickBooks' : 'Archive Only';
+    }
+    
+    // Ensure suggestedPath has a sensible default
+    if (!parsed.suggestedPath) {
+      parsed.suggestedPath = `Invoices/${currentYear}/${parsed.vendorName || 'Uncategorized'}`;
+    }
+    
+    return parsed;
   } catch (error) {
     console.error("Tier 2 Extraction Failed:", error);
     return {
@@ -163,7 +190,9 @@ export async function runTier2(buffer: Buffer, mimeType: string): Promise<Tier2R
       amount: 0,
       date: "",
       description: "Extraction failed",
-      filingCategory: "Administrative"
+      filingCategory: "Administrative",
+      suggestedPath: `Invoices/${currentYear}/Unknown`,
+      suggestedDestination: "Archive Only"
     };
   }
 }

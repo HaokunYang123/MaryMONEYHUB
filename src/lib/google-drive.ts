@@ -4,6 +4,27 @@ import { Readable } from 'stream';
 // --- Configuration ---
 const ROOT_ID = process.env.GOOGLE_ROOT_FOLDER_ID || process.env.GOOGLE_SHARED_DRIVE_ID;
 
+// ============================================================
+// FOLDER CONSTANTS: Staging vs Production Pipeline
+// ============================================================
+export const FOLDERS = {
+  // STAGING: Raw files waiting for human review
+  UNPROCESSED: 'Unprocessed Files',
+  
+  // PRODUCTION: Verified files that have been approved and processed
+  ALL_FILES: 'All Files',
+  
+  // ARCHIVE: Rejected or archived files
+  REJECTED: 'Rejected',
+  
+  // Legacy folders for backwards compatibility
+  INBOX: 'Inbox',
+  PENDING_REVIEW: 'Pending Review',
+  PROCESSED: 'Processed',
+} as const;
+
+export type FolderType = typeof FOLDERS[keyof typeof FOLDERS];
+
 const getCredentials = () => {
   try {
     const jsonKey = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
